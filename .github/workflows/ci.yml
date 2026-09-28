@@ -1,0 +1,92 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test checkpoints
+    runs-on: ubuntu-latest
+    env:
+      AGENT_API_KEY: ci-key
+      REDIS_URL: redis://localhost:6379/0
+      RATE_LIMIT_PER_MINUTE: "10"
+      MONTHLY_BUDGET_USD: "10.0"
+      LOG_LEVEL: INFO
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run required checkpoints
+        run: >-
+          python -m pytest tests/
+          --ignore=tests/test_cp5.py
+          --ignore=tests/test_bonus_cicd.py
+          -v
+
+  build:
+    name: Build production image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build --tag day12-agent:${{ github.sha }} .
+
+  deploy:
+    name: Deploy to Railway
+    needs: [test, build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Deploy verified revision
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: >-
+          npx --yes @railway/cli@5.62.1 up
+          --detach
+          --service agent
+          --environment production
+          --project 5782d8ca-d633-4354-a806-b0ec890f9da3
+          --message "GitHub Actions ${{ github.sha }}"
+
+      - name: Smoke test
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+        run: |
+          sleep 45
+          curl --fail --silent --show-error "${PUBLIC_URL}/health"
