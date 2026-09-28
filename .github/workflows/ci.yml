@@ -75,7 +75,10 @@ jobs:
 
       - name: Deploy verified revision
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          # Account/workspace API tokens are read from RAILWAY_API_TOKEN.
+          # Keep the encrypted GitHub secret named RAILWAY_TOKEN as required
+          # by the lab, and map it to the variable expected by Railway CLI.
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: >-
           npx --yes @railway/cli@5.62.1 up
           --detach
